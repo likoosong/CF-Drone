@@ -24,6 +24,7 @@ bool landed; // are we landed and stationary
 
 void setup() {
 	Serial.begin(115200);
+	print("琛光科技 CF-Drone Flight Controller\n"); // 品牌标识（LICENSE 附加条款第二条要求固件启动输出保留品牌名称）
 	print("程序开始初始化！\n");
 	disableBrownOut();
 	setupParameters();

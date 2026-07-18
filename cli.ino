@@ -51,11 +51,30 @@ const char* motd =
 "reset - 重置无人机\n";
 
 void print(const char* format, ...) {
-	char buf[1000];
-	va_list args;
+	// 固定 1000 字节缓冲区 + vsnprintf 会静默截断超长内容（例如开机菜单 motd），且截断后连换行符都可能丢失，
+	// 导致后续打印内容拼接到同一行。这里先用栈上小缓冲区尝试格式化，若实际所需长度超过缓冲区，
+	// 再按精确所需大小临时用堆内存重新格式化，避免任何长度的内容被静默截断。
+	char stackBuf[512];
+	va_list args, argsCopy;
 	va_start(args, format);
-	vsnprintf(buf, sizeof(buf), format, args);
+	va_copy(argsCopy, args);
+	int needed = vsnprintf(stackBuf, sizeof(stackBuf), format, argsCopy);
+	va_end(argsCopy);
+	if (needed < 0) needed = 0; // 编码错误兵底，避免负数导致后续内存分配异常
+
+	char *buf = stackBuf;
+	bool heapAllocated = false;
+	if (needed >= (int)sizeof(stackBuf)) {
+		buf = (char*)malloc(needed + 1);
+		if (buf) {
+			vsnprintf(buf, needed + 1, format, args);
+			heapAllocated = true;
+		} else {
+			buf = stackBuf; // 内存不足兵底：退回已截断的栈缓冲区内容
+		}
+	}
 	va_end(args);
+
 	Serial.print(buf);
 #if WIFI_ENABLED
 	mavlinkPrint(buf);
@@ -63,12 +82,15 @@ void print(const char* format, ...) {
 #if WEB_RC_ENABLED
 	if (webConsoleEnabled) webLog(buf);
 #endif
+	if (heapAllocated) free(buf);
 }
 
 void pause(float duration) {
 	float start = t;
 	while (t - start < duration) {
+		readIMU(); // 长时间阻塞命令（ca/cr）期间也需要持续刷新IMU/姿态，否则打印信息会定格在进入pause前的旧值
 		step();
+		estimate();
 		handleInput();
 #if WIFI_ENABLED
 		processMavlink();
